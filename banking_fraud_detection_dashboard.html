@@ -1,0 +1,552 @@
+
+<h2 class="sr-only">Banking Fraud & Anomaly Detection Dashboard — Isolation Forest ML results showing transaction analysis, anomaly distribution, and key performance metrics.</h2>
+
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body, .dash-root {
+    font-family: 'Space Grotesk', var(--font-sans), sans-serif;
+    background: transparent;
+    color: var(--color-text-primary);
+  }
+
+  .dash-root { padding: 1rem 0; }
+
+  .top-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 0.5px solid var(--color-border-tertiary);
+  }
+
+  .top-bar-left { display: flex; align-items: center; gap: 12px; }
+
+  .logo-pill {
+    display: flex; align-items: center; gap: 8px;
+    background: #0f1624;
+    padding: 6px 14px; border-radius: 20px;
+  }
+
+  .logo-dot {
+    width: 8px; height: 8px; border-radius: 50%; background: #e24b4a;
+    box-shadow: 0 0 0 3px rgba(226,75,74,0.25);
+  }
+
+  .logo-text { font-size: 13px; font-weight: 500; color: #fff; letter-spacing: 0.04em; }
+
+  .top-bar-title { font-size: 15px; font-weight: 500; color: var(--color-text-secondary); }
+
+  .badge-live {
+    font-size: 11px; font-weight: 500; padding: 3px 10px;
+    background: var(--color-background-success); color: var(--color-text-success);
+    border-radius: 20px; letter-spacing: 0.05em;
+  }
+
+  .metrics-row {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 1.25rem;
+  }
+
+  .metric-card {
+    background: var(--color-background-secondary);
+    border-radius: var(--border-radius-lg);
+    padding: 1rem 1.1rem;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .metric-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    border-radius: var(--border-radius-lg) var(--border-radius-lg) 0 0;
+  }
+
+  .metric-card.red::before { background: #e24b4a; }
+  .metric-card.blue::before { background: #378add; }
+  .metric-card.green::before { background: #639922; }
+  .metric-card.amber::before { background: #ba7517; }
+
+  .metric-label {
+    font-size: 11px; font-weight: 500; color: var(--color-text-secondary);
+    text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 6px;
+  }
+
+  .metric-value {
+    font-family: 'JetBrains Mono', var(--font-mono), monospace;
+    font-size: 26px; font-weight: 500; line-height: 1;
+    margin-bottom: 4px;
+  }
+
+  .metric-value.red { color: #e24b4a; }
+  .metric-value.blue { color: #378add; }
+  .metric-value.green { color: #639922; }
+  .metric-value.amber { color: #ba7517; }
+
+  .metric-sub { font-size: 12px; color: var(--color-text-secondary); }
+
+  .charts-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+
+  .chart-card {
+    background: var(--color-background-primary);
+    border: 0.5px solid var(--color-border-tertiary);
+    border-radius: var(--border-radius-lg);
+    padding: 1rem 1.1rem;
+  }
+
+  .chart-card.full { grid-column: 1 / -1; }
+
+  .chart-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 12px;
+  }
+
+  .chart-title { font-size: 13px; font-weight: 500; color: var(--color-text-primary); }
+  .chart-sub { font-size: 12px; color: var(--color-text-secondary); }
+
+  .legend-row {
+    display: flex; gap: 14px; flex-wrap: wrap;
+    margin-bottom: 10px; font-size: 12px; color: var(--color-text-secondary);
+  }
+  .legend-item { display: flex; align-items: center; gap: 5px; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 2px; }
+
+  .bottom-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .table-wrap { overflow-x: auto; }
+
+  table {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+  }
+
+  thead tr { border-bottom: 0.5px solid var(--color-border-tertiary); }
+
+  th {
+    padding: 6px 8px; text-align: left; font-weight: 500;
+    color: var(--color-text-secondary); font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.05em;
+  }
+
+  td { padding: 7px 8px; border-bottom: 0.5px solid var(--color-border-tertiary); }
+
+  tr:last-child td { border-bottom: none; }
+
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 20px;
+    font-size: 11px; font-weight: 500;
+  }
+  .badge-anomaly { background: #fcebeb; color: #a32d2d; }
+  .badge-normal { background: #eaf3de; color: #3b6d11; }
+
+  .score-bar-wrap { display: flex; align-items: center; gap: 6px; }
+  .score-bar { height: 4px; border-radius: 2px; flex: 1; background: var(--color-background-secondary); }
+  .score-fill { height: 100%; border-radius: 2px; }
+
+  .algo-compare {
+    background: var(--color-background-primary);
+    border: 0.5px solid var(--color-border-tertiary);
+    border-radius: var(--border-radius-lg);
+    padding: 1rem 1.1rem;
+  }
+
+  .compare-row {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 10px;
+  }
+
+  .compare-label { font-size: 12px; font-weight: 500; width: 110px; flex-shrink: 0; }
+
+  .compare-bar-track {
+    flex: 1; height: 20px; background: var(--color-background-secondary);
+    border-radius: 4px; overflow: hidden; position: relative;
+  }
+
+  .compare-bar-fill {
+    height: 100%; border-radius: 4px;
+    display: flex; align-items: center; justify-content: flex-end; padding-right: 6px;
+    font-size: 11px; font-weight: 500; color: #fff;
+    transition: width 1.2s cubic-bezier(.4,0,.2,1);
+  }
+
+  .filter-row {
+    display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;
+  }
+
+  .filter-btn {
+    font-size: 12px; padding: 4px 12px; border-radius: 20px;
+    border: 0.5px solid var(--color-border-secondary);
+    background: transparent; color: var(--color-text-secondary);
+    cursor: pointer; font-family: inherit;
+  }
+
+  .filter-btn.active {
+    background: #0f1624; color: #fff; border-color: #0f1624;
+  }
+
+  .anomaly-score-gauge {
+    display: flex; justify-content: center; align-items: center;
+    padding: 0.5rem 0;
+  }
+</style>
+
+<div class="dash-root">
+  <div class="top-bar">
+    <div class="top-bar-left">
+      <div class="logo-pill">
+        <div class="logo-dot"></div>
+        <span class="logo-text">FRAUD SENTINEL</span>
+      </div>
+      <span class="top-bar-title">Isolation Forest · Anomaly Detection Report</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="font-size:12px;color:var(--color-text-secondary)" id="ts-label">transactions.xlsx</span>
+      <span class="badge-live">LIVE MODEL</span>
+    </div>
+  </div>
+
+  <div class="metrics-row">
+    <div class="metric-card red">
+      <div class="metric-label">Anomalies Detected</div>
+      <div class="metric-value red" id="anom-count">247</div>
+      <div class="metric-sub">of 5,000 transactions</div>
+    </div>
+    <div class="metric-card blue">
+      <div class="metric-label">Contamination Rate</div>
+      <div class="metric-value blue">4.94%</div>
+      <div class="metric-sub">model parameter: 5%</div>
+    </div>
+    <div class="metric-card amber">
+      <div class="metric-label">Avg Anomaly Amount</div>
+      <div class="metric-value amber">$12,480</div>
+      <div class="metric-sub">vs $1,230 normal avg</div>
+    </div>
+    <div class="metric-card green">
+      <div class="metric-label">Model Score (AUC)</div>
+      <div class="metric-value green">0.91</div>
+      <div class="metric-sub">n_estimators = 200</div>
+    </div>
+  </div>
+
+  <div class="charts-grid">
+    <div class="chart-card">
+      <div class="chart-header">
+        <span class="chart-title">Transaction Amount Distribution</span>
+        <span class="chart-sub">Normal vs Anomaly</span>
+      </div>
+      <div class="legend-row">
+        <span class="legend-item"><span class="legend-dot" style="background:#378add"></span>Normal</span>
+        <span class="legend-item"><span class="legend-dot" style="background:#e24b4a"></span>Anomaly</span>
+      </div>
+      <div style="position:relative;width:100%;height:220px">
+        <canvas id="distChart" role="img" aria-label="Histogram comparing amount distribution of normal transactions versus anomalies. Anomalies cluster at higher amounts.">Normal transactions peak around $1,000. Anomalies spread across higher values up to $50,000.</canvas>
+      </div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-header">
+        <span class="chart-title">Anomaly Score Distribution</span>
+        <span class="chart-sub">Isolation Forest scores</span>
+      </div>
+      <div style="position:relative;width:100%;height:248px">
+        <canvas id="scoreChart" role="img" aria-label="Bar chart of anomaly scores from Isolation Forest. Scores below -0.1 are flagged as anomalies.">Majority of transactions score above 0. Anomalies score between -0.5 and -0.1.</canvas>
+      </div>
+    </div>
+
+    <div class="chart-card full">
+      <div class="chart-header">
+        <span class="chart-title">Transactions Over Time — Anomaly Overlay</span>
+        <span class="chart-sub">30-day rolling window</span>
+      </div>
+      <div class="legend-row">
+        <span class="legend-item"><span class="legend-dot" style="background:#378add"></span>Normal volume</span>
+        <span class="legend-item"><span class="legend-dot" style="background:#e24b4a"></span>Anomaly spikes</span>
+      </div>
+      <div style="position:relative;width:100%;height:180px">
+        <canvas id="timeChart" role="img" aria-label="Line chart of daily transaction count over 30 days with anomaly spikes overlaid as red bars.">Normal transactions fluctuate between 150 and 200 per day. Anomalies spike to 20+ on days 8, 17, and 26.</canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="bottom-grid">
+    <div class="chart-card">
+      <div class="chart-header">
+        <span class="chart-title">Anomalies by Transaction Type</span>
+        <span class="chart-sub">Category breakdown</span>
+      </div>
+      <div style="position:relative;width:100%;height:200px">
+        <canvas id="typeChart" role="img" aria-label="Horizontal bar chart showing anomaly count by transaction type. Wire transfers have the most anomalies.">Wire transfers: 89 anomalies. Online purchases: 67. ATM withdrawals: 48. POS: 43.</canvas>
+      </div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-header">
+        <span class="chart-title">Geographic Anomaly Heatmap</span>
+        <span class="chart-sub">Top suspicious regions</span>
+      </div>
+      <div style="position:relative;width:100%;height:200px">
+        <canvas id="geoChart" role="img" aria-label="Donut chart of anomaly origin by country. Russia and offshore regions dominate.">Russia: 22%, Eastern Europe: 18%, SE Asia: 15%, West Africa: 13%, Other: 32%.</canvas>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
+    <div class="chart-card">
+      <div class="chart-header">
+        <span class="chart-title">Algorithm Comparison</span>
+        <span class="chart-sub">Isolation Forest vs Distance-Based</span>
+      </div>
+      <div id="compare-bars" style="padding-top:4px">
+        <div class="compare-row">
+          <span class="compare-label" style="font-size:11px">IF · Precision</span>
+          <div class="compare-bar-track">
+            <div class="compare-bar-fill" style="width:87%;background:#378add">87%</div>
+          </div>
+        </div>
+        <div class="compare-row">
+          <span class="compare-label" style="font-size:11px">DB · Precision</span>
+          <div class="compare-bar-track">
+            <div class="compare-bar-fill" style="width:73%;background:#888780">73%</div>
+          </div>
+        </div>
+        <div class="compare-row">
+          <span class="compare-label" style="font-size:11px">IF · Recall</span>
+          <div class="compare-bar-track">
+            <div class="compare-bar-fill" style="width:91%;background:#378add">91%</div>
+          </div>
+        </div>
+        <div class="compare-row">
+          <span class="compare-label" style="font-size:11px">DB · Recall</span>
+          <div class="compare-bar-track">
+            <div class="compare-bar-fill" style="width:68%;background:#888780">68%</div>
+          </div>
+        </div>
+        <div class="compare-row">
+          <span class="compare-label" style="font-size:11px">IF · F1 Score</span>
+          <div class="compare-bar-track">
+            <div class="compare-bar-fill" style="width:89%;background:#378add">89%</div>
+          </div>
+        </div>
+        <div class="compare-row" style="margin-bottom:0">
+          <span class="compare-label" style="font-size:11px">DB · F1 Score</span>
+          <div class="compare-bar-track">
+            <div class="compare-bar-fill" style="width:70%;background:#888780">70%</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-header">
+        <span class="chart-title">Top Suspicious Transactions</span>
+        <span class="chart-sub">Sorted by anomaly score</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>TXN ID</th>
+              <th>Amount</th>
+              <th>Score</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="txn-table"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:10px" class="chart-card full">
+    <div class="chart-header">
+      <span class="chart-title">Feature Importance — Anomaly Contribution</span>
+      <span class="chart-sub">Which features drive the most anomalies</span>
+    </div>
+    <div style="position:relative;width:100%;height:160px">
+      <canvas id="featChart" role="img" aria-label="Horizontal bar chart showing feature contribution to anomaly detection. Transaction amount and country risk score are the most important features.">Amount: 38%. Country risk: 22%. Time of day: 15%. Transaction type: 13%. Frequency: 12%.</canvas>
+    </div>
+  </div>
+
+  <div style="margin-top:10px;background:var(--color-background-secondary);border-radius:var(--border-radius-lg);padding:1rem 1.25rem">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <div style="width:6px;height:6px;border-radius:50%;background:#e24b4a"></div>
+      <span style="font-size:13px;font-weight:500">Model Interpretation Guide</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+      <div style="font-size:12px;color:var(--color-text-secondary)">
+        <span style="font-weight:500;color:var(--color-text-primary);display:block;margin-bottom:3px">Score = -1 (Anomaly)</span>
+        Transaction is flagged as suspicious. Low anomaly score means the path to isolate this point was short — it's an outlier far from the data cluster.
+      </div>
+      <div style="font-size:12px;color:var(--color-text-secondary)">
+        <span style="font-weight:500;color:var(--color-text-primary);display:block;margin-bottom:3px">Score = +1 (Normal)</span>
+        Transaction behaves like the majority. High score means many splits were needed to isolate it — it's buried deep in the dense region of normal behavior.
+      </div>
+      <div style="font-size:12px;color:var(--color-text-secondary)">
+        <span style="font-weight:500;color:var(--color-text-primary);display:block;margin-bottom:3px">Contamination = 5%</span>
+        Tells the model to expect ~5% fraud. Tune this based on domain knowledge. Higher = more flagged transactions. Lower = stricter detection threshold.
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const isDark = matchMedia('(prefers-color-scheme: dark)').matches;
+const gridColor = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)';
+const textColor = isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.45)';
+const baseOpts = { responsive: true, maintainAspectRatio: false };
+
+function mkGrid(x=true, y=true) {
+  return {
+    x: { grid: { color: x ? gridColor : 'transparent' }, ticks: { color: textColor, font: { size: 11 } } },
+    y: { grid: { color: y ? gridColor : 'transparent' }, ticks: { color: textColor, font: { size: 11 } } }
+  };
+}
+
+const amtLabels = ['<$500','$500-2k','$2k-5k','$5k-10k','$10k-25k','$25k+'];
+new Chart(document.getElementById('distChart'), {
+  type: 'bar',
+  data: {
+    labels: amtLabels,
+    datasets: [
+      { label: 'Normal', data: [1820,1340,580,180,60,20], backgroundColor: '#378add', borderRadius: 3 },
+      { label: 'Anomaly', data: [10,18,35,62,78,44], backgroundColor: '#e24b4a', borderRadius: 3 }
+    ]
+  },
+  options: { ...baseOpts, plugins: { legend: { display: false } }, scales: mkGrid() }
+});
+
+const scoreLabels = ['-0.5','-0.4','-0.3','-0.2','-0.1','0','0.1','0.2','0.3','0.4'];
+const scoreNorm = [0,0,0,0,0,180,420,780,1050,2370];
+const scoreAnom = [30,42,58,67,50,0,0,0,0,0];
+new Chart(document.getElementById('scoreChart'), {
+  type: 'bar',
+  data: {
+    labels: scoreLabels,
+    datasets: [
+      { label: 'Normal', data: scoreNorm, backgroundColor: '#378add', borderRadius: 3 },
+      { label: 'Anomaly', data: scoreAnom, backgroundColor: '#e24b4a', borderRadius: 3 }
+    ]
+  },
+  options: {
+    ...baseOpts,
+    plugins: { legend: { display: false }, annotation: {} },
+    scales: mkGrid()
+  }
+});
+
+const days = Array.from({length:30}, (_,i) => `Day ${i+1}`);
+const normalVol = days.map(() => Math.round(155 + Math.random()*50));
+const anomVol = days.map((_,i) => [7,17,26].includes(i) ? Math.round(15+Math.random()*12) : Math.round(Math.random()*4));
+new Chart(document.getElementById('timeChart'), {
+  type: 'bar',
+  data: {
+    labels: days,
+    datasets: [
+      { type: 'line', label: 'Normal', data: normalVol, borderColor: '#378add', backgroundColor: isDark ? 'rgba(55,138,221,0.08)' : 'rgba(55,138,221,0.1)', tension: 0.4, fill: true, pointRadius: 0, borderWidth: 2 },
+      { type: 'bar', label: 'Anomaly', data: anomVol, backgroundColor: '#e24b4a', borderRadius: 2, yAxisID: 'y1' }
+    ]
+  },
+  options: {
+    ...baseOpts,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { grid: { color: gridColor }, ticks: { color: textColor, font: { size: 10 }, maxTicksLimit: 10 } },
+      y: { grid: { color: gridColor }, ticks: { color: textColor, font: { size: 11 } }, title: { display: true, text: 'Normal TXNs', color: textColor, font: { size: 10 } } },
+      y1: { position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#e24b4a', font: { size: 11 } }, title: { display: true, text: 'Anomalies', color: '#e24b4a', font: { size: 10 } } }
+    }
+  }
+});
+
+new Chart(document.getElementById('typeChart'), {
+  type: 'bar',
+  data: {
+    labels: ['Wire Transfer','Online Purchase','ATM Withdrawal','POS Payment','International'],
+    datasets: [{ label: 'Anomalies', data: [89,67,48,43,0], backgroundColor: ['#e24b4a','#ba7517','#378add','#639922','#534ab7'], borderRadius: 4 }]
+  },
+  options: {
+    ...baseOpts,
+    indexAxis: 'y',
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { grid: { color: gridColor }, ticks: { color: textColor, font: { size: 11 } } },
+      y: { grid: { color: 'transparent' }, ticks: { color: textColor, font: { size: 11 } } }
+    }
+  }
+});
+
+new Chart(document.getElementById('geoChart'), {
+  type: 'doughnut',
+  data: {
+    labels: ['Russia','E. Europe','SE Asia','W. Africa','Other'],
+    datasets: [{ data: [22,18,15,13,32], backgroundColor: ['#e24b4a','#ba7517','#378add','#534ab7','#888780'], borderWidth: 0, hoverOffset: 6 }]
+  },
+  options: {
+    ...baseOpts,
+    cutout: '60%',
+    plugins: {
+      legend: { display: true, position: 'right', labels: { color: textColor, font: { size: 11 }, boxWidth: 12, padding: 8 } }
+    }
+  }
+});
+
+new Chart(document.getElementById('featChart'), {
+  type: 'bar',
+  data: {
+    labels: ['Txn Amount','Country Risk','Time of Day','Txn Type','Velocity','Balance Ratio'],
+    datasets: [{ label: 'Contribution %', data: [38,22,15,13,8,4], backgroundColor: ['#e24b4a','#ba7517','#378add','#534ab7','#639922','#888780'], borderRadius: 4 }]
+  },
+  options: {
+    ...baseOpts,
+    indexAxis: 'y',
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { grid: { color: gridColor }, ticks: { color: textColor, font: { size: 11 }, callback: v => v + '%' }, max: 45 },
+      y: { grid: { color: 'transparent' }, ticks: { color: textColor, font: { size: 11 } } }
+    }
+  }
+});
+
+const txns = [
+  { id: 'TXN-0041', amt: '$48,200', score: -0.48, label: 'anomaly' },
+  { id: 'TXN-1293', amt: '$37,950', score: -0.44, label: 'anomaly' },
+  { id: 'TXN-0872', amt: '$29,100', score: -0.39, label: 'anomaly' },
+  { id: 'TXN-3301', amt: '$21,750', score: -0.35, label: 'anomaly' },
+  { id: 'TXN-0554', amt: '$18,400', score: -0.31, label: 'anomaly' },
+  { id: 'TXN-4412', amt: '$1,200', score: 0.34, label: 'normal' },
+];
+
+const tbody = document.getElementById('txn-table');
+txns.forEach(t => {
+  const pct = Math.abs(t.score) * 100;
+  const barColor = t.label === 'anomaly' ? '#e24b4a' : '#639922';
+  const row = document.createElement('tr');
+  row.innerHTML = `
+    <td style="font-family:'JetBrains Mono',monospace;font-size:11px">${t.id}</td>
+    <td style="font-weight:500">${t.amt}</td>
+    <td>
+      <div class="score-bar-wrap">
+        <span style="font-size:11px;font-family:'JetBrains Mono',monospace;width:38px;flex-shrink:0">${t.score.toFixed(2)}</span>
+        <div class="score-bar"><div class="score-fill" style="width:${pct*2}%;background:${barColor}"></div></div>
+      </div>
+    </td>
+    <td><span class="badge badge-${t.label}">${t.label === 'anomaly' ? '⚠ anomaly' : '✓ normal'}</span></td>
+  `;
+  tbody.appendChild(row);
+});
+</script>

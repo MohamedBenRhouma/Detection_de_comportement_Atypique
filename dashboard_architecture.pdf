@@ -1,0 +1,408 @@
+# Four One AI — Dashboard Architecture
+
+> Generated: 2026-04-20 · Covers Frontend, Backend & Database layers
+
+---
+
+## High-Level Overview
+
+```mermaid
+graph LR
+    subgraph Frontend["Frontend (Angular 17+)"]
+        Shell["DashboardComponent (Shell)"]
+        OV["Overview Page"]
+        ACT["Activity & Runs"]
+        HE["Health Page"]
+        PR["Purchases / Credits / etc."]
+        DSvc["DashboardService"]
+        LSvc["LiveDashboardService"]
+    end
+
+    subgraph Backend["Backend (NestJS)"]
+        DC["DashboardController"]
+        DS["DashboardService"]
+        LE["LiveEventService (SSE Bus)"]
+        SB["SupabaseService"]
+    end
+
+    subgraph Database["Database (Supabase / PostgreSQL)"]
+        UW["user_workflows"]
+        UWE["user_workflow_executions"]
+        UAL["user_activity_logs"]
+        KPI["get_user_dashboard_kpis()"]
+        TRG["DB Triggers"]
+    end
+
+    Shell --> OV & ACT & HE & PR
+    OV --> DSvc
+    ACT --> DSvc
+    Shell --> LSvc
+    DSvc -->|HTTP| DC
+    LSvc -->|SSE| DC
+    DC --> DS
+    DC --> LE
+    DS --> SB
+    SB --> UW & UWE & UAL & KPI
+    TRG -.->|auto-fire| UAL
+```
+
+---
+
+## 1. Frontend Architecture
+
+### 1.1 Component Tree
+
+```
+DashboardComponent (Shell)
+├── Sidebar (collapsible, 216px ↔ 68px)
+├── Topbar (toggle button, page title, credits, notifications, avatar menu)
+├── Route Loader Overlay (classic spinner, 1.5s minimum)
+├── Live Execution Banner (visible on Overview & Activity only)
+└── <router-outlet>
+    ├── OverviewComponent        /dashboard
+    ├── ActivityComponent        /dashboard/activity
+    ├── HealthComponent          /dashboard/health
+    ├── PurchasesComponent       /dashboard/purchases
+    ├── CreditsComponent         /dashboard/credits
+    ├── InvoicesComponent        /dashboard/invoices
+    ├── MyPaymentsComponent      /dashboard/payments
+    ├── ProfileComponent         /dashboard/profile
+    ├── BillingComponent         /dashboard/billing
+    └── SettingsComponent        /dashboard/settings
+```
+
+### 1.2 Key Files
+
+| File | Purpose |
+|------|---------|
+| `dashboard.component.ts` | Shell layout, sidebar, topbar, route loader, live banner |
+| `overview/overview.component.ts` | KPI cards, charts (Chart.js), service grid, recent runs |
+| `activity/activity.component.ts` | Unified feed: stats bar, status filters, paginated run list |
+| `health/health.component.ts` | Per-workflow health cards with status indicators |
+
+### 1.3 Services
+
+#### `DashboardService` (`services/dashboard.service.ts`)
+
+| Method | Calls | Purpose |
+|--------|-------|---------|
+| `loadKpis(period, from, to)` | `GET /dashboard/kpis` | All KPI data for overview |
+| `loadServices()` | `GET /dashboard/services` | Purchased services grouped by category |
+| `loadUnifiedFeed(page, limit, status)` | `GET /dashboard/unified-feed` | Merged activity + runs |
+| `markActivityRead(ids)` | `POST /dashboard/activity/read` | Mark notifications read |
+| `startAutoRefresh()` | — | 30s polling for KPIs |
+| `mapPeriodToApi()` / `getDateRange()` | — | Period dropdown helpers |
+
+#### `LiveDashboardService` (`services/live-dashboard.service.ts`)
+
+| Feature | Detail |
+|---------|--------|
+| SSE Connection | `GET /dashboard/live?token=<jwt>` |
+| State Recovery | `GET /dashboard/executions/live` on connect |
+| Elapsed Ticker | Updates every 1s via `setInterval` outside Angular zone |
+| Auto-Reconnect | Exponential backoff (1s → 30s max, 10 attempts) |
+| Signals | `liveExecutions()`, `isConnected()`, `lastEvent()` |
+
+### 1.4 State Management
+
+All state uses **Angular Signals** (no RxJS Subjects for UI state):
+
+```typescript
+// DashboardService
+kpiData = signal<DashboardKpis | null>(null);
+services = signal<UserService[]>([]);
+loading = signal(false);
+error = signal<string | null>(null);
+
+// DashboardComponent (Shell)
+showSidebar = signal(true);
+sidebarCollapsed = signal(false);
+showLiveBanner = signal(false);
+isRouteLoading = signal(false);
+```
+
+### 1.5 Routing
+
+```typescript
+{ path: '',         component: OverviewComponent }     // exact match
+{ path: 'activity', component: ActivityComponent }
+{ path: 'history',  redirectTo: 'activity' }           // legacy redirect
+{ path: 'health',   component: HealthComponent }
+{ path: 'purchases' | 'credits' | 'invoices' | 'payments' | 'profile' | 'billing' | 'settings' }
+```
+
+All child routes use **lazy loading** via `loadComponent`.
+
+---
+
+## 2. Backend Architecture
+
+### 2.1 Module Structure
+
+```
+DashboardModule
+├── imports: [SupabaseModule]
+├── controllers: [DashboardController]
+├── providers: [DashboardService, LiveEventService]
+└── exports: [DashboardService, LiveEventService]
+```
+
+### 2.2 API Endpoints
+
+| Method | Route | Auth | Purpose |
+|--------|-------|------|---------|
+| `GET` | `/dashboard/vitality` | No | Platform stats (influencer/affiliate pages) |
+| `GET` | `/dashboard/kpis` | JWT | Per-user KPIs with period filtering |
+| `GET` | `/dashboard/services` | JWT | User's purchased services + health status |
+| `GET` | `/dashboard/unified-feed` | JWT | Paginated runs + stats (merged view) |
+| `POST` | `/dashboard/activity/read` | JWT | Mark activity items as read |
+| `SSE` | `/dashboard/live` | JWT | Real-time execution events stream |
+| `GET` | `/dashboard/executions/live` | JWT | Currently running executions |
+| `POST` | `/dashboard/executions/start` | JWT | Start a new execution (called by n8n) |
+| `PATCH` | `/dashboard/executions/:id/complete` | JWT | Complete an execution (called by n8n) |
+
+### 2.3 Service Methods
+
+#### `DashboardService` (`dashboard.service.ts`)
+
+| Method | DB Call | Returns |
+|--------|---------|---------|
+| `getPlatformStats()` | `purchases` table query | Revenue, purchase count, last 30 days |
+| `getUserKpis()` | `rpc('get_user_dashboard_kpis')` | Full KPI JSON (single DB round-trip) |
+| `getUserServices()` | `purchases` + `user_workflows` + `executions` | Services grouped by category with health |
+| `getUnifiedFeed()` | `user_workflow_executions` + stats query | Paginated runs, aggregate stats, unread count |
+| `markActivityRead()` | `rpc('mark_activity_read')` | `{ success: true }` |
+| `startExecution()` | INSERT into `executions` + SSE emit | `{ executionId, status, startedAt }` |
+| `completeExecution()` | UPDATE `executions` + SSE emit | `{ executionId, status, stoppedAt }` |
+| `getLiveExecutions()` | `rpc('get_live_executions')` | Array of running executions |
+
+#### `LiveEventService` (`live-event.service.ts`)
+
+In-memory event bus using RxJS `Subject`:
+
+```typescript
+emit(event: LiveEvent)                          // Broadcast to all subscribers
+subscribe(userId: string): Observable<MessageEvent>  // SSE stream filtered by user
+```
+
+Event types: `execution_started`, `execution_progress`, `execution_completed`, `execution_failed`
+
+### 2.4 Live Execution Data Flow
+
+```mermaid
+sequenceDiagram
+    participant n8n as n8n Webhook
+    participant API as NestJS API
+    participant DB as Supabase DB
+    participant SSE as LiveEventService
+    participant FE as Angular Dashboard
+
+    n8n->>API: POST /executions/start
+    API->>DB: INSERT execution (status: running)
+    API->>SSE: emit(execution_started)
+    SSE-->>FE: SSE event → addLiveExecution()
+    Note over FE: Banner shows "1 workflow running"
+
+    n8n->>API: PATCH /executions/:id/complete
+    API->>DB: UPDATE execution (status: completed)
+    Note over DB: Triggers fire: counter + activity log
+    API->>SSE: emit(execution_completed)
+    SSE-->>FE: SSE event → removeLiveExecution()
+```
+
+---
+
+## 3. Database Architecture
+
+### 3.1 Entity Relationship Diagram
+
+```mermaid
+erDiagram
+    profiles ||--o{ user_workflows : "owns"
+    profiles ||--o{ user_activity_logs : "has"
+    profiles ||--o{ purchases : "makes"
+    workflows ||--o{ user_workflows : "assigned to"
+    workflows ||--o{ purchases : "purchased"
+    user_workflows ||--o{ user_workflow_executions : "runs"
+
+    profiles {
+        uuid id PK
+        text first_name
+        text last_name
+        text email
+        text phone
+        text role
+        text avatar_url
+        text referral_code
+        timestamptz created_at
+    }
+
+    workflows {
+        uuid id PK
+        text name
+        text category
+        text description
+        timestamptz created_at
+    }
+
+    purchases {
+        uuid id PK
+        uuid user_id FK
+        uuid workflow_id FK
+        numeric amount
+        text status
+        timestamptz created_at
+    }
+
+    user_workflows {
+        uuid id PK
+        uuid user_id FK
+        uuid workflow_id FK
+        int day_total_usage
+        int month_total_usage
+        int day_total_credits
+        timestamptz created_at
+        timestamptz updated_at
+    }
+
+    user_workflow_executions {
+        uuid id PK
+        uuid user_wf_id FK
+        text status
+        timestamptz started_at
+        timestamptz stopped_at
+        jsonb logs
+        text failure_reason
+        boolean is_failed
+        int total_credits
+        int total_seconds
+        timestamptz created_at
+    }
+
+    user_activity_logs {
+        uuid id PK
+        uuid user_id FK
+        text event_type
+        text title
+        text description
+        jsonb metadata
+        text severity
+        boolean is_read
+        timestamptz created_at
+    }
+```
+
+### 3.2 Core Tables
+
+#### `user_workflows`
+Maps a user to a purchased workflow. Contains **cached counters** (`day_total_usage`, `month_total_usage`, `day_total_credits`) that are auto-incremented by triggers and reset by cron functions.
+
+#### `user_workflow_executions`
+Every individual workflow run. Tracks full lifecycle with `status` column: `pending` → `running` → `completed`/`failed`. This table is the **single source of truth** for all execution data.
+
+#### `user_activity_logs`
+Auto-populated by DB triggers whenever an execution completes or fails. Supports 10 event types: `workflow_run`, `workflow_failed`, `purchase`, `config_change`, `credit_usage`, `login`, `profile_update`, `system`, `webhook_trigger`, `subscription_change`.
+
+### 3.3 RPC Functions (Postgres)
+
+| Function | Called By | Purpose |
+|----------|-----------|---------|
+| `get_user_dashboard_kpis(user_id, period, from, to)` | `GET /kpis` | All KPIs in one call (totals, rates, timeline, per-workflow breakdown, recent runs) |
+| `get_user_activity_feed(user_id, limit, offset, event_type)` | `getUnifiedFeed()` (for unread count) | Paginated activity feed with unread count |
+| `get_user_system_logs(user_id, limit, offset, severity)` | *(retained in DB, endpoint removed)* | Technical execution diagnostics |
+| `mark_activity_read(user_id, activity_ids)` | `POST /activity/read` | Mark items as read (bulk or all) |
+| `get_live_executions(user_id)` | `GET /executions/live` | Currently running executions with elapsed time |
+
+### 3.4 Triggers
+
+| Trigger | Table | Event | Action |
+|---------|-------|-------|--------|
+| `trg_execution_counter_increment` | `user_workflow_executions` | INSERT or UPDATE | Increments `day_total_usage`, `month_total_usage`, `day_total_credits` on `user_workflows` (only when status transitions to completed/failed) |
+| `trg_log_workflow_execution` | `user_workflow_executions` | INSERT or UPDATE | Auto-creates an entry in `user_activity_logs` with workflow name, category, duration, credits (only when status transitions to completed/failed) |
+| `trg_user_workflows_updated_at` | `user_workflows` | UPDATE | Sets `updated_at = NOW()` |
+| `trg_user_workflow_executions_updated_at` | `user_workflow_executions` | UPDATE | Sets `updated_at = NOW()` |
+
+### 3.5 Cron Functions
+
+| Function | Schedule | Purpose |
+|----------|----------|---------|
+| `reset_daily_workflow_counters()` | Daily at midnight | Resets `day_total_usage` and `day_total_credits` to 0 |
+| `reset_monthly_workflow_counters()` | 1st of each month | Resets `month_total_usage` to 0 |
+
+### 3.6 Performance Indexes
+
+| Index | Table | Columns | Purpose |
+|-------|-------|---------|---------|
+| `idx_user_workflows_user` | `user_workflows` | `user_id` | Fast user lookup |
+| `idx_user_workflows_user_workflow` | `user_workflows` | `user_id, workflow_id` | Unique pair lookup |
+| `idx_user_workflow_executions_user_wf` | `user_workflow_executions` | `user_wf_id` | Join optimization |
+| `idx_user_wf_exec_created` | `user_workflow_executions` | `created_at DESC` | Timeline queries |
+| `idx_user_wf_exec_user_wf_created` | `user_workflow_executions` | `user_wf_id, created_at DESC` | Per-workflow history |
+| `idx_user_wf_exec_failed` | `user_workflow_executions` | `user_wf_id WHERE is_failed` | Failed run filtering |
+| `idx_user_wf_exec_status` | `user_workflow_executions` | `status WHERE IN (pending, running)` | Live execution lookup |
+| `idx_activity_logs_user_created` | `user_activity_logs` | `user_id, created_at DESC` | Feed pagination |
+| `idx_activity_logs_unread` | `user_activity_logs` | `user_id WHERE is_read = FALSE` | Unread badge count |
+
+### 3.7 Row Level Security (RLS)
+
+All three dashboard tables have RLS enabled:
+- **Users** can only SELECT their own rows
+- **Admins** have full access (checked via `public.is_admin()`)
+- **Service role** can INSERT activity logs (for triggers)
+
+---
+
+## 4. KPI Data Flow
+
+```mermaid
+flowchart TD
+    A["User opens Overview page"] --> B["loadKpis('30d')"]
+    B --> C["GET /dashboard/kpis?period=30d"]
+    C --> D["DashboardService.getUserKpis()"]
+    D --> E["rpc('get_user_dashboard_kpis')"]
+    E --> F{"Single Postgres Function"}
+    F --> G["total_executions"]
+    F --> H["success_rate"]
+    F --> I["avg_duration_seconds"]
+    F --> J["failed_runs"]
+    F --> K["total_credits_used"]
+    F --> L["today (cached counters)"]
+    F --> M["this_month (cached counters)"]
+    F --> N["workflows[] breakdown"]
+    F --> O["timeline[] for charts"]
+    F --> P["recent_executions[]"]
+    G & H & I & J & K & L & M & N & O & P --> Q["JSON response"]
+    Q --> R["kpiData signal updates"]
+    R --> S["UI re-renders reactively"]
+```
+
+---
+
+## 5. File Inventory
+
+### Frontend (`frontend/src/app/`)
+
+| Path | Type | Lines |
+|------|------|-------|
+| `pages/dashboard/dashboard.component.ts` | Shell + Layout | ~510 |
+| `pages/dashboard/overview/overview.component.ts` | KPI Dashboard | ~716 |
+| `pages/dashboard/activity/activity.component.ts` | Unified Feed | ~539 |
+| `pages/dashboard/health/health.component.ts` | Health Cards | ~267 |
+| `services/dashboard.service.ts` | HTTP + Signals | ~270 |
+| `services/live-dashboard.service.ts` | SSE + State | ~263 |
+
+### Backend (`backend/src/dashboard/`)
+
+| Path | Type | Lines |
+|------|------|-------|
+| `dashboard.controller.ts` | REST Endpoints | ~159 |
+| `dashboard.service.ts` | Business Logic | ~497 |
+| `live-event.service.ts` | SSE Event Bus | ~60 |
+| `dashboard.module.ts` | NestJS Module | ~14 |
+
+### Database
+
+| Path | Type | Lines |
+|------|------|-------|
+| `migration_complete_dashboard.sql` | Schema + Functions + Indexes | ~630 |
+| `migration_live_executions.sql` | Live status extension | ~211 |
